@@ -1,0 +1,25 @@
+{
+  "name": "simple-liquidation-monitor",
+  "version": "1.0.0",
+  "description": "Простий бот для моніторингу ліквідацій на Binance",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "binance",
+    "liquidation",
+    "telegram",
+    "crypto"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.14.2",
+    "node-telegram-bot-api": "^0.64.0",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
