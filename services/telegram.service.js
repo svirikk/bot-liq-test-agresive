@@ -65,36 +65,41 @@ class TelegramService {
   async handleChannelMessage(msg) {
     try {
       const text = msg.text || msg.caption || '';
-      let signalData = this.parseJsonSignal(text);
+      
+      // Зверни увагу: тут БЕЗ "this.", бо функція зовні класу
+      let signalData = parseJsonSignal(text);
 
-      // Якщо JSON не розпарсився, дістаємо з тексту
+      // 1. Якщо в JSON немає символу, шукаємо в тексті
       if (!signalData.symbol) {
         const symbolMatch = text.match(/Symbol:\s*([A-Z0-9]+)/i);
         if (symbolMatch) signalData.symbol = symbolMatch[1];
       }
 
-      // === ОСЬ ЦЕЙ БЛОК Я ДОДАВ ДЛЯ ТЕБЕ ===
+      // 2. КОНВЕРТАЦІЯ СИМВОЛУ (Те, що нам було потрібно)
       if (signalData.symbol) {
         signalData.symbol = signalData.symbol.toUpperCase()
           .replace('USDT', '-USDC')
           .replace('-USD', '-USDC');
       }
-      // =====================================
 
+      // 3. Шукаємо напрямок, якщо немає в JSON
       if (!signalData.direction) {
         const directionMatch = text.match(/Direction:\s*(LONG|SHORT)/i);
         if (directionMatch) signalData.direction = directionMatch[1];
       }
 
+      // 4. Шукаємо тип, якщо немає в JSON
       if (!signalData.signalType) {
         const typeMatch = text.match(/Type:\s*([^\n\r]+)/i);
-        if (typeMatch) signalData.signalType = typeMatch[1].trim();
+        if (typeMatch) signalData.signalType = typeMatch[1]?.trim();
       }
 
-      // Викликаємо нормалізацію напрямку
+      // 5. Визначаємо фінальний напрямок через функцію нормалізації
       const direction = normalizeDirection(signalData.direction, signalData.signalType);
 
+      // Якщо символ знайдено — запускаємо трейд
       if (signalData.symbol) {
+        logger.info(`[TELEGRAM] Signal parsed: ${signalData.symbol} ${direction}`);
         this.signalCallbacks.forEach(callback => callback({
           symbol: signalData.symbol,
           direction: direction,
