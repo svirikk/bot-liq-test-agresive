@@ -1,4 +1,4 @@
-import { ec, pedersen } from 'starknet';
+import * as starknet from '@scure/starknet';
 import { config } from '../config/settings.js';
 import logger from '../utils/logger.js';
 
@@ -10,6 +10,10 @@ import logger from '../utils/logger.js';
  * - Створення hash-а з параметрів ордера (pedersen chain)
  * - Генерацію nonce та external order ID
  * 
+ * Використовує @scure/starknet:
+ *   starknet.pedersen(a, b) → hex string
+ *   starknet.sign(msgHash, privateKey) → { r: bigint, s: bigint }
+ * 
  * Кожен ордер (entry, TP, SL) потребує окремого підпису.
  */
 class StarkSigner {
@@ -17,10 +21,6 @@ class StarkSigner {
     this.privateKey = config.extended.starkPrivateKey;
     this.publicKey = config.extended.starkPublicKey;
     this.vaultId = config.extended.vaultId;
-
-    // Створюємо EC instance з starknet.js
-    // ec.sign() приймає (privateKey, msgHash)
-    this.ec = ec;
 
     logger.info('[STARK] StarkSigner initialized');
     logger.info(`[STARK] Public Key: ${this.publicKey.slice(0, 12)}...`);
@@ -102,7 +102,7 @@ class StarkSigner {
     ];
 
     for (const field of fields) {
-      hash = pedersen(hash, field);
+      hash = starknet.pedersen(hash, field);
     }
 
     return hash;
@@ -118,9 +118,9 @@ class StarkSigner {
   signOrder(orderParams, nonce) {
     try {
       const msgHash = this.getOrderHash(orderParams, nonce);
-      
-      // ec.sign(privateKey, msgHash) → { r: BN, s: BN }
-      const signature = this.ec.sign(this.privateKey, msgHash);
+
+      // starknet.sign(msgHash, privateKey) → { r: bigint, s: bigint }
+      const signature = starknet.sign(msgHash, this.privateKey);
 
       const r = '0x' + signature.r.toString(16);
       const s = '0x' + signature.s.toString(16);
