@@ -1,6 +1,7 @@
 import winston from 'winston';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,32 +21,47 @@ const logFormat = winston.format.combine(
   })
 );
 
-// Створюємо логер
-const logger = winston.createLogger({
-  level: 'info',
-  format: logFormat,
-  transports: [
-    // Консольний вивід
-    new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.colorize(),
-        logFormat
-      )
-    }),
+// ✅ Базовий транспорт — console (працює завжди, Railway показує в Logs UI)
+const transports = [
+  new winston.transports.Console({
+    format: winston.format.combine(
+      winston.format.colorize(),
+      logFormat
+    )
+  })
+];
+
+// ✅ File logging ТІЛЬКИ локально (Railway має ephemeral filesystem)
+if (process.env.NODE_ENV !== 'production') {
+  const logsDir = path.join(__dirname, '../logs');
+  
+  // Створюємо logs директорію якщо не існує
+  if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+  }
+
+  transports.push(
     // Файл для всіх логів
     new winston.transports.File({
-      filename: path.join(__dirname, '../logs/combined.log'),
+      filename: path.join(logsDir, 'combined.log'),
       maxsize: 5242880, // 5MB
       maxFiles: 5
     }),
     // Файл тільки для помилок
     new winston.transports.File({
-      filename: path.join(__dirname, '../logs/errors.log'),
+      filename: path.join(logsDir, 'errors.log'),
       level: 'error',
       maxsize: 5242880, // 5MB
       maxFiles: 5
     })
-  ]
+  );
+}
+
+// Створюємо логер
+const logger = winston.createLogger({
+  level: 'info',
+  format: logFormat,
+  transports: transports
 });
 
 export default logger;
