@@ -1,9 +1,5 @@
-import dotenv from 'dotenv';
-
-// 🔹 Завантажуємо .env ТІЛЬКИ локально
-if (process.env.NODE_ENV !== 'production') {
-  dotenv.config();
-}
+// .env загружается в config/settings.js (с явным путем)
+// settings.js импортируется ниже и загружает .env до валидации
 
 import { config } from './config/settings.js';
 import logger from './utils/logger.js';
