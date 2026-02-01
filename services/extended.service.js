@@ -86,25 +86,18 @@ class ExtendedService {
         throw new Error(`Failed to get balance: HTTP ${response.status}`);
       }
 
-      const data = response.data;
+      const responseData = response.data;
       
-      // --- ДОДАНО ДЛЯ ПЕРЕВІРКИ ---
-      logger.info(`🐛 RAW BALANCE JSON: ${JSON.stringify(data)}`);
-      // ----------------------------
-
-      // Спробуйте знайти USDC, якщо структура інша
+      // Логіка витягування балансу з структури Extended.exchange
       let available = 0;
       
-      // Варіант 1: Простий об'єкт
-      if (data.available) available = parseFloat(data.available);
-      
-      // Варіант 2: Масив активів (часто буває на Starknet)
-      else if (Array.isArray(data)) {
-         const usdc = data.find(a => a.currency === 'USDC' || a.asset === 'USDC');
-         if (usdc) available = parseFloat(usdc.availableBalance || usdc.balance);
+      if (responseData.status === 'OK' && responseData.data) {
+        // Беремо кошти, доступні для торгівлі (availableForTrade)
+        // або загальний баланс (balance)
+        available = parseFloat(responseData.data.availableForTrade || responseData.data.balance || '0');
       }
 
-      logger.info(`[EXTENDED] Balance parsed: ${available}`);
+      logger.info(`[EXTENDED] Balance parsed successfully: ${available} ${responseData.data?.collateralName || ''}`);
       return available;
     } catch (error) {
       logger.error(`[EXTENDED] Error getting balance: ${error.message}`);
