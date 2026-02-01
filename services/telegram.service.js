@@ -109,19 +109,12 @@ class TelegramService {
    */
   parseSignal(text) {
     try {
-      // Спочатку намагаємося знайти JSON блок
-      const jsonMatch = text.match(/\{[\s\S]*"timestamp"[\s\S]*"symbol"[\s\S]*"direction"[\s\S]*\}/);
-      
-      if (jsonMatch) {
-        const jsonStr = jsonMatch[0];
-        const signalData = JSON.parse(jsonStr);
-        
-        // Валідація обов'язкових полів
-        if (!signalData.symbol || !signalData.direction) {
-          // Якщо JSON не містить всіх даних, намагаємося парсити з HTML
-          return this.parseSignalFromHTML(text);
-        }
-        
+      // ─── Робуста екстракція JSON блоку через подсчёт фигурних скобок ───
+      // Старий метод регексом /\{[\s\S]*"timestamp"[\s\S]*"symbol"...\}/
+      // ЛОМАЕТСЯ когда ключи идут в другом порядке (JSON order не гарантирован!)
+      const signalData = this._extractJSON(text);
+
+      if (signalData && signalData.symbol && signalData.direction) {
         const rawSignalType = signalData.signalType || 'UNKNOWN';
         const normalizedSignalType = rawSignalType
           ? rawSignalType.toString().toUpperCase().replace(/\s+/g, '_')
@@ -132,7 +125,6 @@ class TelegramService {
           normalizedSignalType
         );
 
-        // ─── Адаптация символа: если приходит ADAUSDT → конвертируем в ADA-USD ───
         const symbol = this.normalizeSymbol(signalData.symbol);
 
         return {
@@ -143,11 +135,44 @@ class TelegramService {
           stats: signalData.stats || {}
         };
       }
-      
-      // Якщо JSON не знайдено, парсимо з HTML формату
+
+      // Якщо JSON не знайдено або не містить нужних полів — парсимо з HTML
       return this.parseSignalFromHTML(text);
     } catch (error) {
       logger.error(`[TELEGRAM] Error parsing signal: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Надійна екстракція JSON з тексту.
+   * Знаходить перший '{', рахує вложенні скобки до відповідного '}'.
+   * Потім пробує JSON.parse. Не залежить від порядку ключів.
+   */
+  _extractJSON(text) {
+    const startIdx = text.indexOf('{');
+    if (startIdx === -1) return null;
+
+    let depth = 0;
+    let endIdx = -1;
+
+    for (let i = startIdx; i < text.length; i++) {
+      if (text[i] === '{') depth++;
+      else if (text[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          endIdx = i;
+          break;
+        }
+      }
+    }
+
+    if (endIdx === -1) return null;
+
+    try {
+      return JSON.parse(text.substring(startIdx, endIdx + 1));
+    } catch (e) {
+      logger.warn(`[TELEGRAM] JSON parse failed: ${e.message}`);
       return null;
     }
   }

@@ -23,8 +23,8 @@ class StarkSigner {
     this.vaultId = config.extended.vaultId;
 
     logger.info('[STARK] StarkSigner initialized');
-    logger.info(`[STARK] Public Key: ${this.publicKey.slice(0, 12)}...`);
-    logger.info(`[STARK] Vault ID: ${this.vaultId}`);
+    logger.info(`[STARK] Public Key: ${this.publicKey ? this.publicKey.slice(0, 12) + '...' : '⚠️ UNDEFINED'}`);
+    logger.info(`[STARK] Vault ID: ${this.vaultId || '⚠️ UNDEFINED'}`);
   }
 
   /**
