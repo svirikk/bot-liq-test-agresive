@@ -1,8 +1,6 @@
-import dotenv from 'dotenv';
+// .env загружается автоматически в config/settings.js (через extended.service.js)
 import extendedService from '../services/extended.service.js';
 import logger from '../utils/logger.js';
-
-dotenv.config();
 
 async function checkPositions() {
   try {
