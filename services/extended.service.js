@@ -86,12 +86,25 @@ class ExtendedService {
         throw new Error(`Failed to get balance: HTTP ${response.status}`);
       }
 
-      // Extended response structure (приклад):
-      // { balance: "1000.50", available: "800.00", margin: "200.00" }
       const data = response.data;
-      const available = parseFloat(data.available || data.balance || '0');
+      
+      // --- ДОДАНО ДЛЯ ПЕРЕВІРКИ ---
+      logger.info(`🐛 RAW BALANCE JSON: ${JSON.stringify(data)}`);
+      // ----------------------------
 
-      logger.info(`[EXTENDED] Balance: ${available} (total: ${data.balance})`);
+      // Спробуйте знайти USDC, якщо структура інша
+      let available = 0;
+      
+      // Варіант 1: Простий об'єкт
+      if (data.available) available = parseFloat(data.available);
+      
+      // Варіант 2: Масив активів (часто буває на Starknet)
+      else if (Array.isArray(data)) {
+         const usdc = data.find(a => a.currency === 'USDC' || a.asset === 'USDC');
+         if (usdc) available = parseFloat(usdc.availableBalance || usdc.balance);
+      }
+
+      logger.info(`[EXTENDED] Balance parsed: ${available}`);
       return available;
     } catch (error) {
       logger.error(`[EXTENDED] Error getting balance: ${error.message}`);
