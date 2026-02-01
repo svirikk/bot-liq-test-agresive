@@ -1,4 +1,4 @@
-import { ec } from 'starknet';
+import { ec, pedersen } from 'starknet';
 import { config } from '../config/settings.js';
 import logger from '../utils/logger.js';
 
@@ -87,9 +87,6 @@ class StarkSigner {
     const vaultFelt = '0x' + BigInt(this.vaultId).toString(16);
 
     // Pedersen chain: h = pedersen(pedersen(...pedersen(0, field1), field2), ...)
-    // Використовуємо starknet.js pedersen
-    const { pedersen } = await_import_pedersen();
-
     let hash = '0x0';
     const fields = [
       marketFelt,
@@ -205,28 +202,6 @@ class StarkSigner {
     const bigVal = BigInt(Math.round(parseFloat(value) * Number(factor)));
     return '0x' + bigVal.toString(16);
   }
-}
-
-/**
- * Lazy import для pedersen function з starknet.js.
- * Вирішує проблему top-level await в ESM модулях.
- */
-let _pedersen = null;
-function await_import_pedersen() {
-  // starknet.js v6 export: import { pedersen } from 'starknet'
-  // Якщо доступно — використовуємо. Інакше — fallback stub.
-  if (!_pedersen) {
-    try {
-      // Dynamic import не потрібний — starknet.js v6 export sync
-      const starknet = await import('starknet');
-      _pedersen = starknet.pedersen || starknet.hash?.pedersen;
-    } catch (e) {
-      logger.warn('[STARK] pedersen not found in starknet.js, using stub');
-      // Stub для DRY_RUN тестування без реальних подписей
-      _pedersen = (a, b) => '0x' + BigInt(0x12345678).toString(16);
-    }
-  }
-  return { pedersen: _pedersen };
 }
 
 // Singleton
