@@ -65,23 +65,41 @@ class TelegramService {
   async handleChannelMessage(msg) {
     try {
       const text = msg.text || msg.caption || '';
-      
-      // Перевіряємо чи це structured сигнал
-      if (this.isSignalMessage(text)) {
-        const signal = this.parseSignal(text);
-        
-        if (signal) {
-          logger.info(`[TELEGRAM] Signal received: ${signal.symbol} ${signal.direction}`);
-          
-          // Викликаємо всі зареєстровані callback'и
-          for (const callback of this.signalCallbacks) {
-            try {
-              await callback(signal);
-            } catch (error) {
-              logger.error(`[TELEGRAM] Error in signal callback: ${error.message}`);
-            }
-          }
-        }
+      let signalData = this.parseJsonSignal(text);
+
+      // Якщо JSON не розпарсився, дістаємо з тексту
+      if (!signalData.symbol) {
+        const symbolMatch = text.match(/Symbol:\s*([A-Z0-9]+)/i);
+        if (symbolMatch) signalData.symbol = symbolMatch[1];
+      }
+
+      // === ОСЬ ЦЕЙ БЛОК Я ДОДАВ ДЛЯ ТЕБЕ ===
+      if (signalData.symbol) {
+        signalData.symbol = signalData.symbol.toUpperCase()
+          .replace('USDT', '-USDC')
+          .replace('-USD', '-USDC');
+      }
+      // =====================================
+
+      if (!signalData.direction) {
+        const directionMatch = text.match(/Direction:\s*(LONG|SHORT)/i);
+        if (directionMatch) signalData.direction = directionMatch[1];
+      }
+
+      if (!signalData.signalType) {
+        const typeMatch = text.match(/Type:\s*([^\n\r]+)/i);
+        if (typeMatch) signalData.signalType = typeMatch[1].trim();
+      }
+
+      // Викликаємо нормалізацію напрямку
+      const direction = normalizeDirection(signalData.direction, signalData.signalType);
+
+      if (signalData.symbol) {
+        this.signalCallbacks.forEach(callback => callback({
+          symbol: signalData.symbol,
+          direction: direction,
+          type: signalData.signalType || 'UNKNOWN'
+        }));
       }
     } catch (error) {
       logger.error(`[TELEGRAM] Error handling message: ${error.message}`);
