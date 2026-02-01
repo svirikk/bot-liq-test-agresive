@@ -1,6 +1,22 @@
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Шукаємо .env від root проекту (на 1 рівень вище config/)
+const envPath = path.resolve(__dirname, '..', '.env');
+const result = dotenv.config({ path: envPath });
+
+if (result.error) {
+  console.warn(`[settings] ⚠️  .env не знайдений: ${envPath}`);
+  console.warn(`[settings] ⚠️  Помилка: ${result.error.message}`);
+  console.warn(`[settings] ⚠️  process.cwd(): ${process.cwd()}`);
+} else {
+  console.log(`[settings] ✅ .env загружен з: ${envPath}`);
+  console.log(`[settings] ✅ Загружены ключи: ${Object.keys(result.parsed).join(', ')}`);
+}
 
 // Валідація обов'язкових змінних
 const requiredEnvVars = [
@@ -14,6 +30,8 @@ const requiredEnvVars = [
 
 for (const envVar of requiredEnvVars) {
   if (!process.env[envVar]) {
+    console.error(`[settings] ❌ ${envVar} = undefined`);
+    console.error(`[settings] ❌ .env загружен: ${!result.error}, ключи в .env: ${result.parsed ? Object.keys(result.parsed).join(', ') : 'NONE'}`);
     throw new Error(`Missing required environment variable: ${envVar}`);
   }
 }
