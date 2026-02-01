@@ -23,7 +23,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "starknet": "^6.3.0",
+    "@scure/starknet": "^1.0.0",
     "node-telegram-bot-api": "^0.66.0",
     "dotenv": "^16.4.5",
     "axios": "^1.7.7",
