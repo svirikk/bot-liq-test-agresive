@@ -6,29 +6,100 @@ import logger from '../utils/logger.js';
  * Нормалізує напрямок угоди на основі типу сигналу.
  *
  * Логіка:
- * - LONG FLUSH      → завжди LONG (Buy)
- * - SHORT SQUEEZE   → завжди SHORT (Sell)
- * - Інші типи       → використовуємо те, що прийшло в direction (LONG/SHORT)
+ * - LONG FLUSH      → завжди SHORT (протилежно flush!)
+ * - SHORT SQUEEZE   → завжди LONG (протилежно squeeze!)
+ * - Інші типи       → використовуємо direction як є
  */
 function normalizeDirection(rawDirection, rawSignalType) {
   const direction = (rawDirection || '').toUpperCase();
   const signalType = (rawSignalType || '').toUpperCase().replace(/\s+/g, '_');
 
+  // ✅ ВАЖЛИВО: LONG FLUSH = ціна падає → SHORT позиція!
   if (signalType === 'LONG_FLUSH') {
-    return 'LONG';
-  }
-
-  if (signalType === 'SHORT_SQUEEZE') {
     return 'SHORT';
   }
 
-  // За замовчуванням довіряємо direction, якщо він валідний
+  // ✅ ВАЖЛИВО: SHORT SQUEEZE = ціна росте → LONG позиція!
+  if (signalType === 'SHORT_SQUEEZE') {
+    return 'LONG';
+  }
+
+  // За замовчуванням довіряємо direction
   if (direction === 'LONG' || direction === 'SHORT') {
     return direction;
   }
 
-  // Якщо нічого валідного немає - повертаємо LONG як дефолт (далі все одно буде валідація)
+  // Fallback
   return 'LONG';
+}
+
+/**
+ * ✅ НОВА ФУНКЦІЯ: Парсить JSON з тексту
+ * Витягує JSON блок з повідомлення
+ */
+function parseJsonSignal(text) {
+  if (!text) return {};
+
+  const startIdx = text.indexOf('{');
+  if (startIdx === -1) return {};
+
+  let depth = 0;
+  let endIdx = -1;
+
+  for (let i = startIdx; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') {
+      depth--;
+      if (depth === 0) {
+        endIdx = i;
+        break;
+      }
+    }
+  }
+
+  if (endIdx === -1) return {};
+
+  try {
+    return JSON.parse(text.substring(startIdx, endIdx + 1));
+  } catch (e) {
+    logger.warn(`[TELEGRAM] JSON parse failed: ${e.message}`);
+    return {};
+  }
+}
+
+/**
+ * ✅ ВИПРАВЛЕНА ФУНКЦІЯ: Конвертує символ Bybit → Extended
+ * 
+ * Extended.exchange використовує формат: BTC-USD, ETH-USD, ADA-USD
+ * (collateral = USDC, але в назві символу використовується -USD)
+ * 
+ * Конвертація:
+ *   ADAUSDT  → ADA-USD
+ *   BTCUSDT  → BTC-USD
+ *   ETHUSDT  → ETH-USD
+ *   SOLUSDT  → SOL-USD
+ */
+function normalizeSymbol(rawSymbol) {
+  if (!rawSymbol) return null;
+
+  const sym = rawSymbol.toUpperCase().trim();
+
+  // Якщо вже в Extended форматі (містить '-')
+  if (sym.includes('-')) {
+    return sym;
+  }
+
+  // Видаляємо USDT/USDC/USD суфікси
+  let base = sym;
+  for (const suffix of ['USDT', 'USDC', 'USD']) {
+    if (base.endsWith(suffix)) {
+      base = base.slice(0, -suffix.length);
+      break;
+    }
+  }
+
+  // ✅ Extended формат: BASE-USD (не -USDC!)
+  return `${base}-USD`;
 }
 
 class TelegramService {
@@ -44,9 +115,8 @@ class TelegramService {
    * Налаштовує обробник повідомлень
    */
   setupMessageHandler() {
-    // Слухаємо повідомлення З КАНАЛУ (а не з приватного чату)
+    // Слухаємо повідомлення З КАНАЛУ
     this.bot.on('channel_post', (msg) => {
-      // Перевіряємо що це наш канал
       if (msg.chat.id.toString() === this.channelId.toString()) {
         this.handleChannelMessage(msg);
       }
@@ -60,223 +130,81 @@ class TelegramService {
   }
 
   /**
-   * Обробляє повідомлення з каналу
+   * ✅ ВИПРАВЛЕНА ФУНКЦІЯ: Обробка повідомлення з каналу
    */
   async handleChannelMessage(msg) {
     try {
       const text = msg.text || msg.caption || '';
       
-      // Зверни увагу: тут БЕЗ "this.", бо функція зовні класу
-      let signalData = parseJsonSignal(text);
+      logger.info(`[TELEGRAM] Received message: ${text.substring(0, 100)}...`);
 
-      // 1. Якщо в JSON немає символу, шукаємо в тексті
-      if (!signalData.symbol) {
+      // 1. Витягуємо JSON (якщо є)
+      const signalData = parseJsonSignal(text);
+
+      // 2. Шукаємо Symbol (спочатку в JSON, потім у тексті)
+      let symbol = signalData.symbol;
+      if (!symbol) {
         const symbolMatch = text.match(/Symbol:\s*([A-Z0-9]+)/i);
-        if (symbolMatch) signalData.symbol = symbolMatch[1];
+        if (symbolMatch) symbol = symbolMatch[1];
       }
 
-      // 2. КОНВЕРТАЦІЯ СИМВОЛУ (Те, що нам було потрібно)
-      if (signalData.symbol) {
-        signalData.symbol = signalData.symbol.toUpperCase()
-          .replace('USDT', '-USDC')
-          .replace('-USD', '-USDC');
+      // ✅ 3. КОНВЕРТУЄМО СИМВОЛ (Bybit → Extended)
+      if (symbol) {
+        symbol = normalizeSymbol(symbol);
+        logger.info(`[TELEGRAM] Normalized symbol: ${symbol}`);
       }
 
-      // 3. Шукаємо напрямок, якщо немає в JSON
-      if (!signalData.direction) {
+      // 4. Шукаємо Direction (спочатку в JSON, потім у тексті)
+      let direction = signalData.direction;
+      if (!direction) {
         const directionMatch = text.match(/Direction:\s*(LONG|SHORT)/i);
-        if (directionMatch) signalData.direction = directionMatch[1];
+        if (directionMatch) direction = directionMatch[1];
       }
 
-      // 4. Шукаємо тип, якщо немає в JSON
-      if (!signalData.signalType) {
+      // 5. Шукаємо Type (спочатку в JSON, потім у тексті)
+      let signalType = signalData.signalType;
+      if (!signalType) {
         const typeMatch = text.match(/Type:\s*([^\n\r]+)/i);
-        if (typeMatch) signalData.signalType = typeMatch[1]?.trim();
+        if (typeMatch) signalType = typeMatch[1]?.trim();
       }
 
-      // 5. Визначаємо фінальний напрямок через функцію нормалізації
-      const direction = normalizeDirection(signalData.direction, signalData.signalType);
+      // ✅ 6. НОРМАЛІЗУЄМО DIRECTION (LONG FLUSH → SHORT!)
+      const finalDirection = normalizeDirection(direction, signalType);
 
-      // Якщо символ знайдено — запускаємо трейд
-      if (signalData.symbol) {
-        logger.info(`[TELEGRAM] Signal parsed: ${signalData.symbol} ${direction}`);
-        this.signalCallbacks.forEach(callback => callback({
-          symbol: signalData.symbol,
-          direction: direction,
-          type: signalData.signalType || 'UNKNOWN'
-        }));
-      }
-    } catch (error) {
-      logger.error(`[TELEGRAM] Error handling message: ${error.message}`);
-    }
-  }
+      logger.info(`[TELEGRAM] Parsed signal:`);
+      logger.info(`  Symbol: ${symbol}`);
+      logger.info(`  Type: ${signalType}`);
+      logger.info(`  Raw Direction: ${direction}`);
+      logger.info(`  Final Direction: ${finalDirection}`);
 
-  /**
-   * Перевіряє чи це сигнальне повідомлення
-   */
-  isSignalMessage(text) {
-    if (!text) return false;
-    
-    // Перевіряємо наявність ключових слів
-    const hasSignalKeyword = text.includes('SIGNAL DETECTED') || 
-                            text.includes('🚨 SIGNAL');
-    
-    // Перевіряємо наявність JSON блоку
-    const hasJsonBlock = text.includes('{') && text.includes('"symbol"') && text.includes('"direction"');
-    
-    return hasSignalKeyword && hasJsonBlock;
-  }
-
-  /**
-   * Парсить сигнал з повідомлення
-   */
-  parseSignal(text) {
-    try {
-      // ─── Робуста екстракція JSON блоку через подсчёт фигурних скобок ───
-      // Старий метод регексом /\{[\s\S]*"timestamp"[\s\S]*"symbol"...\}/
-      // ЛОМАЕТСЯ когда ключи идут в другом порядке (JSON order не гарантирован!)
-      const signalData = this._extractJSON(text);
-
-      if (signalData && signalData.symbol && signalData.direction) {
-        const rawSignalType = signalData.signalType || 'UNKNOWN';
-        const normalizedSignalType = rawSignalType
-          ? rawSignalType.toString().toUpperCase().replace(/\s+/g, '_')
-          : 'UNKNOWN';
-
-        const normalizedDir = normalizeDirection(
-          signalData.direction,
-          normalizedSignalType
-        );
-
-        const symbol = this.normalizeSymbol(signalData.symbol);
-
-        return {
+      // 7. Якщо є символ — відправляємо сигнал
+      if (symbol) {
+        const signal = {
           symbol: symbol,
-          direction: normalizedDir,
-          signalType: normalizedSignalType,
+          direction: finalDirection,
+          signalType: signalType || 'UNKNOWN',
           timestamp: signalData.timestamp || Date.now(),
           stats: signalData.stats || {}
         };
-      }
 
-      // Якщо JSON не знайдено або не містить нужних полів — парсимо з HTML
-      return this.parseSignalFromHTML(text);
-    } catch (error) {
-      logger.error(`[TELEGRAM] Error parsing signal: ${error.message}`);
-      return null;
-    }
-  }
+        logger.info(`[TELEGRAM] ✅ Triggering callbacks for ${symbol} ${finalDirection}`);
 
-  /**
-   * Надійна екстракція JSON з тексту.
-   * Знаходить перший '{', рахує вложенні скобки до відповідного '}'.
-   * Потім пробує JSON.parse. Не залежить від порядку ключів.
-   */
-  _extractJSON(text) {
-    const startIdx = text.indexOf('{');
-    if (startIdx === -1) return null;
-
-    let depth = 0;
-    let endIdx = -1;
-
-    for (let i = startIdx; i < text.length; i++) {
-      if (text[i] === '{') depth++;
-      else if (text[i] === '}') {
-        depth--;
-        if (depth === 0) {
-          endIdx = i;
-          break;
+        // Викликаємо callbacks
+        for (const callback of this.signalCallbacks) {
+          try {
+            await callback(signal);
+          } catch (error) {
+            logger.error(`[TELEGRAM] Callback error: ${error.message}`);
+          }
         }
+      } else {
+        logger.warn(`[TELEGRAM] ⚠️ No symbol found in message`);
       }
-    }
 
-    if (endIdx === -1) return null;
-
-    try {
-      return JSON.parse(text.substring(startIdx, endIdx + 1));
-    } catch (e) {
-      logger.warn(`[TELEGRAM] JSON parse failed: ${e.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Парсить сигнал з HTML формату
-   */
-  parseSignalFromHTML(text) {
-    try {
-      // Парсимо Symbol
-      const symbolMatch = text.match(/<b>Symbol:<\/b>\s*(\w+)/i) || 
-                         text.match(/Symbol:\s*(\w+)/i);
-      
-      // Парсимо Type (LONG FLUSH / SHORT SQUEEZE)
-      const typeMatch = text.match(/<b>Type:<\/b>\s*([A-Z\s_]+)/i) ||
-                       text.match(/Type:\s*([A-Z\s_]+)/i);
-
-      // Парсимо Direction
-      const directionMatch = text.match(/<b>Direction:<\/b>\s*(LONG|SHORT)/i) ||
-                            text.match(/Direction:\s*(LONG|SHORT)/i);
-      
-      if (!symbolMatch || !directionMatch) {
-        return null;
-      }
-      
-      const rawSignalType = typeMatch ? typeMatch[1] : 'UNKNOWN';
-      const normalizedSignalType = rawSignalType
-        ? rawSignalType.toString().toUpperCase().replace(/\s+/g, '_')
-        : 'UNKNOWN';
-
-      const normalizedDir = normalizeDirection(
-        directionMatch[1],
-        normalizedSignalType
-      );
-
-      const symbol = this.normalizeSymbol(symbolMatch[1]);
-
-      return {
-        symbol: symbol,
-        direction: normalizedDir,
-        signalType: normalizedSignalType,
-        timestamp: Date.now(),
-        stats: {}
-      };
     } catch (error) {
-      logger.error(`[TELEGRAM] Error parsing signal from HTML: ${error.message}`);
-      return null;
+      logger.error(`[TELEGRAM] Error handling message: ${error.message}`);
+      logger.error(`[TELEGRAM] Stack: ${error.stack}`);
     }
-  }
-
-  /**
-   * Нормализует символ из формата Bybit (ADAUSDT) в формат Extended (ADA-USD).
-   * 
-   * Примеры:
-   *   ADAUSDT   → ADA-USD
-   *   BTCUSDT   → BTC-USD
-   *   BTC-USD   → BTC-USD (уже в правильном формате)
-   * 
-   * Если символ уже в формате X-USD — не трогаем.
-   */
-  normalizeSymbol(rawSymbol) {
-    if (!rawSymbol) return rawSymbol;
-
-    const sym = rawSymbol.toUpperCase().trim();
-
-    // Если уже в формате Extended (содержит '-')
-    if (sym.includes('-')) {
-      return sym;
-    }
-
-    // Удаляем суффикс USDT / USD / USDC
-    let base = sym;
-    for (const suffix of ['USDT', 'USDC', 'USD']) {
-      if (base.endsWith(suffix)) {
-        base = base.slice(0, -suffix.length);
-        break;
-      }
-    }
-
-    // Формируем Extended формат
-    return `${base}-USD`;
   }
 
   /**
@@ -306,8 +234,6 @@ class TelegramService {
 
   /**
    * Форматує повідомлення про відкриття позиції
-   * 
-   * Адаптация: takeProfit/stopLoss теперь объекты { triggerPrice, limitPrice }
    */
   formatPositionOpenedMessage(positionData) {
     const { 
@@ -316,21 +242,19 @@ class TelegramService {
       entryPrice, 
       quantity, 
       leverage, 
-      takeProfit,   // { triggerPrice, limitPrice }
-      stopLoss,     // { triggerPrice, limitPrice }
+      takeProfit,
+      stopLoss,
       riskAmount,
       balance
     } = positionData;
     
-    // Symbol без суффикса для display
     const cleanSymbol = symbol ? symbol.replace('-USD', '') : 'UNKNOWN';
-    
     const directionEmoji = direction === 'LONG' ? '📈' : '📉';
 
-    // TP/SL % от entry
     const tpPercent = direction === 'LONG'
       ? (((takeProfit.triggerPrice - entryPrice) / entryPrice) * 100).toFixed(2)
       : (((entryPrice - takeProfit.triggerPrice) / entryPrice) * 100).toFixed(2);
+    
     const slPercent = direction === 'LONG'
       ? (((entryPrice - stopLoss.triggerPrice) / entryPrice) * 100).toFixed(2)
       : (((stopLoss.triggerPrice - entryPrice) / entryPrice) * 100).toFixed(2);
