@@ -4,38 +4,28 @@ import logger from '../utils/logger.js';
 
 /**
  * Нормалізує напрямок угоди на основі типу сигналу.
- *
- * Логіка:
- * - LONG FLUSH      → завжди SHORT (протилежно flush!)
- * - SHORT SQUEEZE   → завжди LONG (протилежно squeeze!)
- * - Інші типи       → використовуємо direction як є
  */
 function normalizeDirection(rawDirection, rawSignalType) {
   const direction = (rawDirection || '').toUpperCase();
   const signalType = (rawSignalType || '').toUpperCase().replace(/\s+/g, '_');
 
-  // ✅ ВАЖЛИВО: LONG FLUSH = ціна падає → SHORT позиція!
   if (signalType === 'LONG_FLUSH') {
     return 'SHORT';
   }
 
-  // ✅ ВАЖЛИВО: SHORT SQUEEZE = ціна росте → LONG позиція!
   if (signalType === 'SHORT_SQUEEZE') {
     return 'LONG';
   }
 
-  // За замовчуванням довіряємо direction
   if (direction === 'LONG' || direction === 'SHORT') {
     return direction;
   }
 
-  // Fallback
   return 'LONG';
 }
 
 /**
- * ✅ НОВА ФУНКЦІЯ: Парсить JSON з тексту
- * Витягує JSON блок з повідомлення
+ * Парсить JSON з тексту
  */
 function parseJsonSignal(text) {
   if (!text) return {};
@@ -68,24 +58,24 @@ function parseJsonSignal(text) {
 }
 
 /**
- * ✅ ВИПРАВЛЕНА ФУНКЦІЯ: Конвертує символ Bybit → Extended
+ * ✅ ВИПРАВЛЕНО: Конвертує символ Bybit → Extended
  * 
- * Extended.exchange використовує формат: BTC-USD, ETH-USD, ADA-USD
- * (collateral = USDC, але в назві символу використовується -USD)
+ * Extended.exchange використовує формат: BTC/USD, ETH/USD, ADA/USD
+ * (з СЛЕШЕМ /, а не дефісом -)
  * 
  * Конвертація:
- *   ADAUSDT  → ADA-USD
- *   BTCUSDT  → BTC-USD
- *   ETHUSDT  → ETH-USD
- *   SOLUSDT  → SOL-USD
+ *   ADAUSDT  → ADA/USD  ✅
+ *   BTCUSDT  → BTC/USD
+ *   ETHUSDT  → ETH/USD
+ *   SOLUSDT  → SOL/USD
  */
 function normalizeSymbol(rawSymbol) {
   if (!rawSymbol) return null;
 
   const sym = rawSymbol.toUpperCase().trim();
 
-  // Якщо вже в Extended форматі (містить '-')
-  if (sym.includes('-')) {
+  // Якщо вже містить слеш - не чіпаємо
+  if (sym.includes('/')) {
     return sym;
   }
 
@@ -98,8 +88,8 @@ function normalizeSymbol(rawSymbol) {
     }
   }
 
-  // ✅ Extended формат: BASE-USD (не -USDC!)
-  return `${base}-USD`;
+  // ✅ Extended формат: BASE/USD (зі СЛЕШЕМ!)
+  return `${base}/USD`;
 }
 
 class TelegramService {
@@ -111,11 +101,7 @@ class TelegramService {
     this.setupMessageHandler();
   }
 
-  /**
-   * Налаштовує обробник повідомлень
-   */
   setupMessageHandler() {
-    // Слухаємо повідомлення З КАНАЛУ
     this.bot.on('channel_post', (msg) => {
       if (msg.chat.id.toString() === this.channelId.toString()) {
         this.handleChannelMessage(msg);
@@ -129,46 +115,38 @@ class TelegramService {
     logger.info('[TELEGRAM] ✅ Bot initialized and listening for channel posts');
   }
 
-  /**
-   * ✅ ВИПРАВЛЕНА ФУНКЦІЯ: Обробка повідомлення з каналу
-   */
   async handleChannelMessage(msg) {
     try {
       const text = msg.text || msg.caption || '';
       
       logger.info(`[TELEGRAM] Received message: ${text.substring(0, 100)}...`);
 
-      // 1. Витягуємо JSON (якщо є)
       const signalData = parseJsonSignal(text);
 
-      // 2. Шукаємо Symbol (спочатку в JSON, потім у тексті)
       let symbol = signalData.symbol;
       if (!symbol) {
         const symbolMatch = text.match(/Symbol:\s*([A-Z0-9]+)/i);
         if (symbolMatch) symbol = symbolMatch[1];
       }
 
-      // ✅ 3. КОНВЕРТУЄМО СИМВОЛ (Bybit → Extended)
+      // ✅ КОНВЕРТУЄМО СИМВОЛ (Bybit → Extended з /)
       if (symbol) {
         symbol = normalizeSymbol(symbol);
         logger.info(`[TELEGRAM] Normalized symbol: ${symbol}`);
       }
 
-      // 4. Шукаємо Direction (спочатку в JSON, потім у тексті)
       let direction = signalData.direction;
       if (!direction) {
         const directionMatch = text.match(/Direction:\s*(LONG|SHORT)/i);
         if (directionMatch) direction = directionMatch[1];
       }
 
-      // 5. Шукаємо Type (спочатку в JSON, потім у тексті)
       let signalType = signalData.signalType;
       if (!signalType) {
         const typeMatch = text.match(/Type:\s*([^\n\r]+)/i);
         if (typeMatch) signalType = typeMatch[1]?.trim();
       }
 
-      // ✅ 6. НОРМАЛІЗУЄМО DIRECTION (LONG FLUSH → SHORT!)
       const finalDirection = normalizeDirection(direction, signalType);
 
       logger.info(`[TELEGRAM] Parsed signal:`);
@@ -177,7 +155,6 @@ class TelegramService {
       logger.info(`  Raw Direction: ${direction}`);
       logger.info(`  Final Direction: ${finalDirection}`);
 
-      // 7. Якщо є символ — відправляємо сигнал
       if (symbol) {
         const signal = {
           symbol: symbol,
@@ -189,7 +166,6 @@ class TelegramService {
 
         logger.info(`[TELEGRAM] ✅ Triggering callbacks for ${symbol} ${finalDirection}`);
 
-        // Викликаємо callbacks
         for (const callback of this.signalCallbacks) {
           try {
             await callback(signal);
@@ -207,17 +183,11 @@ class TelegramService {
     }
   }
 
-  /**
-   * Реєструє callback для обробки сигналів
-   */
   onSignal(callback) {
     this.signalCallbacks.push(callback);
     logger.info('[TELEGRAM] Signal callback registered');
   }
 
-  /**
-   * Відправляє повідомлення в канал або чат
-   */
   async sendMessage(chatId, message, options = {}) {
     try {
       const targetChatId = chatId || this.channelId;
@@ -232,9 +202,6 @@ class TelegramService {
     }
   }
 
-  /**
-   * Форматує повідомлення про відкриття позиції
-   */
   formatPositionOpenedMessage(positionData) {
     const { 
       symbol, 
@@ -248,7 +215,7 @@ class TelegramService {
       balance
     } = positionData;
     
-    const cleanSymbol = symbol ? symbol.replace('-USD', '') : 'UNKNOWN';
+    const cleanSymbol = symbol ? symbol.replace('/USD', '').replace('-USD', '') : 'UNKNOWN';
     const directionEmoji = direction === 'LONG' ? '📈' : '📉';
 
     const tpPercent = direction === 'LONG'
@@ -279,9 +246,6 @@ class TelegramService {
 Signal from: ${new Date(positionData.timestamp).toLocaleString('en-US', { timeZone: 'UTC' })} UTC`;
   }
 
-  /**
-   * Форматує повідомлення про закриття позиції
-   */
   formatPositionClosedMessage(positionData) {
     const { symbol, direction, entryPrice, exitPrice, pnl, pnlPercent, duration } = positionData;
     
@@ -300,9 +264,6 @@ Signal from: ${new Date(positionData.timestamp).toLocaleString('en-US', { timeZo
 <b>Duration:</b> ${duration}`;
   }
 
-  /**
-   * Форматує повідомлення про ігнорування сигналу
-   */
   formatSignalIgnoredMessage(symbol, direction, reason, additionalInfo = {}) {
     let message = `⏰ <b>SIGNAL IGNORED</b>
 
@@ -325,9 +286,6 @@ Signal from: ${new Date(positionData.timestamp).toLocaleString('en-US', { timeZo
     return message;
   }
 
-  /**
-   * Форматує щоденний звіт
-   */
   formatDailyReport(report) {
     const winRate = report.totalTrades > 0 
       ? ((report.winTrades / report.totalTrades) * 100).toFixed(1)
@@ -352,6 +310,5 @@ ${roiEmoji} <b>ROI:</b> ${report.roi >= 0 ? '+' : ''}${report.roi.toFixed(2)}%
   }
 }
 
-// Singleton
 const telegramService = new TelegramService();
 export default telegramService;
