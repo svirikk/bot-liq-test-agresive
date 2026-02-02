@@ -5,20 +5,17 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ✅ Завантажуємо .env ТІЛЬКИ локально (Railway використовує env vars через UI)
-if (process.env.NODE_ENV !== 'production') {
-  const envPath = path.resolve(__dirname, '..', '.env');
-  const result = dotenv.config({ path: envPath });
+// Шукаємо .env від root проекту (на 1 рівень вище config/)
+const envPath = path.resolve(__dirname, '..', '.env');
+const result = dotenv.config({ path: envPath });
 
-  if (result.error) {
-    console.warn(`[settings] ⚠️  .env не знайдений: ${envPath}`);
-    console.warn(`[settings] ⚠️  Помилка: ${result.error.message}`);
-  } else {
-    console.log(`[settings] ✅ .env загружен з: ${envPath}`);
-    console.log(`[settings] ✅ Загружены ключи: ${Object.keys(result.parsed).join(', ')}`);
-  }
+if (result.error) {
+  console.warn(`[settings] ⚠️  .env не знайдений: ${envPath}`);
+  console.warn(`[settings] ⚠️  Помилка: ${result.error.message}`);
+  console.warn(`[settings] ⚠️  process.cwd(): ${process.cwd()}`);
 } else {
-  console.log(`[settings] ✅ Production mode: using Railway environment variables`);
+  console.log(`[settings] ✅ .env загружен з: ${envPath}`);
+  console.log(`[settings] ✅ Загружены ключи: ${Object.keys(result.parsed).join(', ')}`);
 }
 
 // Валідація обов'язкових змінних
@@ -34,6 +31,7 @@ const requiredEnvVars = [
 for (const envVar of requiredEnvVars) {
   if (!process.env[envVar]) {
     console.error(`[settings] ❌ ${envVar} = undefined`);
+    console.error(`[settings] ❌ .env загружен: ${!result.error}, ключи в .env: ${result.parsed ? Object.keys(result.parsed).join(', ') : 'NONE'}`);
     throw new Error(`Missing required environment variable: ${envVar}`);
   }
 }
@@ -68,7 +66,7 @@ export const config = {
 
   // Trading Settings
   trading: {
-    // Символи на Extended у форматі: BTC-USD, ETH-USD
+    // Символи на Extended у форматі: BTC-USD, ETH-USD (з ДЕФІСОМ!)
     allowedSymbols: (process.env.ALLOWED_SYMBOLS || 'BTC-USD,ETH-USD,SOL-USD').split(',').map(s => s.trim()),
     maxDailyTrades: parseInt(process.env.MAX_DAILY_TRADES || '20'),
     maxOpenPositions: parseInt(process.env.MAX_OPEN_POSITIONS || '3'),
