@@ -3,25 +3,30 @@ import { config } from '../config/settings.js';
 import logger from '../utils/logger.js';
 
 /**
- * Нормалізує напрямок угоди на основі типу сигналу.
+ * Нормалізує напрямок угоди.
+ * 
+ * ВАЖЛИВО: Довіряємо direction з сигналу. Type використовується тільки як fallback.
  */
 function normalizeDirection(rawDirection, rawSignalType) {
   const direction = (rawDirection || '').toUpperCase();
-  const signalType = (rawSignalType || '').toUpperCase().replace(/\s+/g, '_');
-
-  if (signalType === 'LONG_FLUSH') {
-    return 'SHORT';
-  }
-
-  if (signalType === 'SHORT_SQUEEZE') {
-    return 'LONG';
-  }
-
+  
+  // Якщо direction вже валідний — використовуємо його
   if (direction === 'LONG' || direction === 'SHORT') {
     return direction;
   }
 
-  return 'LONG';
+  // Fallback на signalType (рідко використовується)
+  const signalType = (rawSignalType || '').toUpperCase().replace(/\s+/g, '_');
+  
+  if (signalType === 'LONG_FLUSH') {
+    return 'LONG';
+  }
+
+  if (signalType === 'SHORT_SQUEEZE') {
+    return 'SHORT';
+  }
+
+  return 'LONG';  // default fallback
 }
 
 /**
@@ -58,24 +63,23 @@ function parseJsonSignal(text) {
 }
 
 /**
- * ✅ ВИПРАВЛЕНО: Конвертує символ Bybit → Extended
+ * Конвертує символ Bybit → Extended
  * 
- * Extended.exchange використовує формат: BTC/USD, ETH/USD, ADA/USD
- * (з СЛЕШЕМ /, а не дефісом -)
+ * Extended.exchange використовує формат: BTC-USD, ETH-USD, ADA-USD
+ * (з ДЕФІСОМ -, як у config ALLOWED_SYMBOLS)
  * 
  * Конвертація:
- *   ADAUSDT  → ADA/USD  ✅
- *   BTCUSDT  → BTC/USD
- *   ETHUSDT  → ETH/USD
- *   SOLUSDT  → SOL/USD
+ *   ADAUSDT  → ADA-USD  ✅
+ *   BTCUSDT  → BTC-USD
+ *   ETHUSDT  → ETH-USD
  */
 function normalizeSymbol(rawSymbol) {
   if (!rawSymbol) return null;
 
   const sym = rawSymbol.toUpperCase().trim();
 
-  // Якщо вже містить слеш - не чіпаємо
-  if (sym.includes('/')) {
+  // Якщо вже містить дефіс - не чіпаємо
+  if (sym.includes('-')) {
     return sym;
   }
 
@@ -88,8 +92,8 @@ function normalizeSymbol(rawSymbol) {
     }
   }
 
-  // ✅ Extended формат: BASE/USD (зі СЛЕШЕМ!)
-  return `${base}/USD`;
+  // ✅ Extended формат: BASE-USD (з ДЕФІСОМ!)
+  return `${base}-USD`;
 }
 
 class TelegramService {
@@ -129,7 +133,7 @@ class TelegramService {
         if (symbolMatch) symbol = symbolMatch[1];
       }
 
-      // ✅ КОНВЕРТУЄМО СИМВОЛ (Bybit → Extended з /)
+      // ✅ КОНВЕРТУЄМО СИМВОЛ (Bybit → Extended з дефісом -)
       if (symbol) {
         symbol = normalizeSymbol(symbol);
         logger.info(`[TELEGRAM] Normalized symbol: ${symbol}`);
